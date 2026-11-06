@@ -1,8 +1,9 @@
-name: Build Emerald Green
+name: Build Emerald Green LSPosed
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - 'EmeraldGreen-Minimal.zip'
       - '.github/workflows/build.yml'
@@ -18,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,51 +27,57 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
 
       - name: Extract project ZIP
+        id: extract
         shell: bash
         run: |
           set -euo pipefail
 
           ZIP_FILE="EmeraldGreen-Minimal.zip"
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "::error::Missing $ZIP_FILE in the repository root."
+          if [[ ! -f "$ZIP_FILE" ]]; then
+            echo "::error::Missing $ZIP_FILE in repository root."
+            echo "Files in repository:"
+            ls -la
             exit 1
           fi
 
           mkdir -p extracted
-          unzip -q "$ZIP_FILE" -d extracted
+          unzip -oq "$ZIP_FILE" -d extracted
 
-          PROJECT_DIR="$(find extracted -type f -name settings.gradle -printf '%h\\n' | head -n 1)"
+          SETTINGS_FILE="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Could not find settings.gradle inside the ZIP."
-            find extracted -maxdepth 4 -type f -print
+          if [[ -z "$SETTINGS_FILE" ]]; then
+            echo "::error::No settings.gradle or settings.gradle.kts found in ZIP."
+            find extracted -maxdepth 5 -type f -print
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project directory: $PROJECT_DIR"
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Found project: $PROJECT_DIR"
 
-      - name: Build minified release APK
+      - name: Build release APK
         shell: bash
         run: |
           set -euo pipefail
-          cd "$PROJECT_DIR"
+          cd "${{ steps.extract.outputs.project_dir }}"
           gradle --no-daemon --stacktrace assembleRelease
 
-      - name: Upload APK
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: Emerald-Green-LSPosed
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/app-release.apk
+          path: |
+            extracted/**/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
